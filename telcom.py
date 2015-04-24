@@ -1,0 +1,544 @@
+#!/usr/bin/env python
+
+"""
+A server for pcTCS to handle socket requests/commands
+This is a replacement for the original telcom written by 
+Dave Harvey.
+
+Author: Scott Swindell
+Date: 12/2013
+"""
+
+
+from server import Server, Client
+import json
+import sys
+import threading
+import serial
+import wiringpi2
+import time
+import os
+import subprocess
+import socket
+import sys
+import time
+
+#Get config data and initialize a few things
+cfgName = sys.argv[1]
+cfgDict = json.load( open(cfgName, 'r') )
+
+if cfgDict['hasActivityLight']:
+	from blink import blinker
+
+threadLock = threading.Lock()
+
+
+if cfgDict['hasIIS']:
+	wiringpi2.wiringPiSetup()
+	wiringpi2.pinMode( 1,2 )
+
+if cfgDict['hasActivityLight']:
+	ACT_LIGHT = blinker(26)
+	ACT_LIGHT.setState(1)
+
+global outval
+outval = []	
+	
+	
+
+class legacyClient( Client ):
+
+	##################################################
+	"""	Client class to handle socket requests
+		or commands. Each time a socket is opened on
+		port 5750 the Server class opens this thread
+		to handle it. 
+				
+		"""
+	##################################################
+	
+	def __init__(self,(client,address)):
+		Client.__init__(self, (client,address))
+		if cfgDict["debug"]: print "instantiating Client {0} {1}".format( client, address )
+		self.laddress = address
+
+	def run(self):
+		running = 1
+		msg_tot = ""
+		while running:
+			try:
+				data = self.client.recv(self.size)
+				
+			except Exception as e:
+				print "error is", e, 'at', time.ctime()
+				print "When trying to read from {0}".format(self.laddress)
+				print "With Messages: ", msg_tot
+				data = False
+
+
+			
+			if data:
+				msg_tot+=data
+				#if cfgDict['hasActivityLight']:
+					#ACT_LIGHT.blink(0.05)
+				
+				
+				if data.endswith( '\n' ): data = data[:-1]#Remove trailing new line
+				inWords = data.split( ' ' )
+				
+				#Check for Harvey's telcom string strucutre
+				if inWords[0] == cfgDict['OBSID'] and inWords[1] == cfgDict['SYSID']:
+					
+					try:
+						refNum = int( inWords[2] )
+					except(ValueError):
+						self.client.send("Missing Reference Number")
+						self.client.close()
+						running = 0
+						break	
+					 
+
+				else:
+					
+					self.client.send("BAD")
+					self.client.close()
+					running = 0
+					break
+				
+				#Check for exceptions caused by bad input or bad parse
+				try:
+					req_or_com = inWords[3]
+				except Exception as prob:
+					self.client.send( 'error=%s value=%s \n'%( prob, data ) )
+					self.client.close()
+					running = 0
+					break
+				
+				#handle requests
+				if req_or_com == "REQUEST":
+					self.request( refNum, inWords[4] )
+          
+				elif req_or_com == "NGREQUEST":
+					self.ngRequests[inWords[4]]()	
+				
+				#Handle commands
+				else:
+					com = ''
+					self.command( inWords[3:], refNum )
+             	
+			else:
+				
+				self.client.close()
+				running = 0
+				
+	#Legacy Request
+	def request( self, refNum, reqstr ):
+		####################################################################
+		"""	
+		Name: request
+		args" refNum, reqStr
+		Description: This method handles all the request made
+			to telcom eg: BOK TCS 123 REQUEST RA
+			in the above example 123 is refNum and 'REQUEST RA'
+			is the request string.
+			"""
+		####################################################################
+	
+		#Different programs use different key words. (I think)
+		extraKeys={"MOTION":"MOT",  "AIRMASS":"SECZ", "ROT":"IIS", }
+		
+		
+		#get rid of any and all new lines or carriage returns
+		while (reqstr.endswith("\r") or reqstr.endswith('\n')):
+			reqstr = reqstr[:-1]
+			
+		
+		if reqstr in extraKeys.iterkeys():
+			reqstr = extraKeys[reqstr]
+		
+		#Wait for ALL keyword to be populated. 
+		while reqstr == "ALL" and "ALL" not in outval:
+			#print "waiting"
+			time.sleep(0.1)
+
+		#Build formatted 
+		if reqstr in outval:
+			outstring = "{0} {1} {2} {3}\n" .format( cfgDict['OBSID'], cfgDict['SYSID'], refNum, outval[reqstr] )
+			
+			return self.client.send( outstring )
+		else:
+			return self.client.send( "Unknown Request: %s \n" %reqstr )
+
+
+	#legacy Command
+	def command(self, comlist, refNum ):
+	
+	#########################################################
+		"""	
+			Name: command
+			args: comlist, refNum
+			 
+			Description: This method handles all the commands made
+				to telcom eg: BOK TCS 123 MOVELAZ 90.0 180.0
+				in the above example 123 is refNum and 'MOVELAZ 90.0 180.0'
+				is the request string.
+		"""
+	#########################################################
+		
+		#construct command string
+		comstr = ''
+		for word in comlist: 
+			comstr+=word+' '
+			
+		#Get rid of whitespace caused by above parsing
+		comstr = comstr[:-1]
+			
+		#get rid of any newline or carriage returns
+		while ( comstr.endswith( "\r" ) or comstr.endswith( '\n' ) ):
+			comstr = comstr[:-1]
+			
+		#Write the command to the serial port
+		try:
+			ser = serial.Serial( gUSBport, 9600 )
+			ser.write( comstr+"\r" )
+		except Exception as e:
+			if cfgDict['debug']: print e
+			return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, "SERIAL_ERROR") )
+			
+		#Wait half a second and grab the error code from
+		#the telem stream
+		time.sleep( 0.5 )
+		errorCode = outval["ERROR"].upper().strip()
+			
+		if errorCode != "E": #Command was not understood
+				returnVal = "BAD"
+		else:#Command was understood
+			returnVal = "OK"
+		return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, returnVal) )
+			
+		
+	
+	def ngAll(self):
+		outstr = ''
+		
+		for val in outval.itervalues():
+			outstr+=val+' '
+		return self.client.send( "{0}\n".format(outstr) )
+
+	def findUSBPort(self):
+	#####################################
+		"""
+		Name: findUSBPort
+		args: None
+		Returns: device file name for serial-USB converter
+		 
+		Description: Determines which device USB device file
+			exists (if any). Initially I used lsusb to determine
+			which if the USB port in question was actually the 
+			serial to USB adapter. But this was slow. If anything else 
+			is plugged into the USB port there could be trouble.	
+		"""
+	#####################################
+		#usbs = subprocess.check_output("lsusb", shell=True)
+		#usbs=usbs.split('\n')
+		#serialUSBFullPath = False
+		#for usb in usbs:
+			#if "USB-Serial" in usb:
+				#serialUSB = usb.split(' ')
+				#serialUSBFullPath	= "/dev/bus/usb/001/%s" %serialUSB[3][:-1]
+			
+		
+		if os.path.exists('/dev/ttyUSB0'):
+			return '/dev/ttyUSB0'
+		elif os.path.exists('/dev/ttyUSB1'):
+			return '/dev/ttyUSB1'
+		else:
+			print "Could Find USB"
+			return False	
+		
+
+
+#Class to talk to TCS machine via the 
+#Serial port
+class get_serial ( threading.Thread ):
+	#####################################################
+	"""
+	Class Name: get_serial
+	Inherits: Threading
+	
+	Description: Opens a thread to read the pcTCS telem
+		stream. The stream is parsed into a globalized dictionary
+		to be read by the client class. If the telem stream
+		cannot be read for any reason the dictionary
+		is populated with "SERIAL_ERROR" instead. 
+		 
+	"""
+	###############################################
+	def __init__ ( self, baude_rate ):
+		threading.Thread.__init__( self )
+		self.USBport = self.findUSBPort()
+		self.baude_rate = baude_rate
+		print self.USBport
+		
+		if cfgDict['debug']: print "instantiating serial class"
+		
+		#convert unicode to ascii
+		self.data_key = [str(val) for val in cfgDict['keywords']]
+		print self.data_key
+	
+	def run ( self ):
+		running = 1
+		if cfgDict['debug']: print "running serial loop"
+		rawStream=''
+		reading = False
+		
+		valError = ["SERIAL_ERROR"]*16
+		
+		global outval #Globalize so client thread can see it. 
+		global gUSBport #Globalize this So client command method doesn't have to find it everytime.
+		gUSBport=False
+		
+		outval = dict( zip( self.data_key, valError ) )
+		serialError = True
+		
+		lastIIS = 0.0
+		iisPos = 0.0
+		iisCount=0
+		iisMaxCount=10
+		#Initial check for serial/USB connection
+		while serialError:
+			if self.USBport:
+				gUSBport = self.USBport
+				self.com = serial.Serial( self.USBport, self.baude_rate, timeout=1.0 )
+				serialError = False
+			else:
+				print( "Could Not Find serial port:%s"%self.USBport )
+				gUSBport = False
+			
+				self.USBport = self.findUSBPort()
+				time.sleep( 0.5 )
+		i=0
+		while running:
+			serialError = True
+			if cfgDict['debug']: "restarting serial loop"
+			#Check USB port evertime a telem string char
+			#is read in. You never know when someone will 
+			#unplug that USB or serial cable
+			while serialError:
+				
+				try:
+					#if DEBUG: print "reading serial port"
+					gUSBport = self.USBport
+					inchar = self.com.read()
+					#if DEBUG: print inchar
+					if inchar == "":
+					
+						raise( serial.SerialException )
+						
+					else:
+						serialError = False
+						
+					
+				except( serial.SerialException ):
+					if cfgDict['debug']: print "serial exception"
+					threadLock.acquire()
+					outval = dict( zip( self.data_key,['SERIAL_ERROR']*17 ) )
+					threadLock.release()
+					
+						
+					self.USBport = self.findUSBPort()
+					if self.USBport:
+						self.com = serial.Serial( self.USBport, self.baude_rate, timeout=1.0 )
+						serialError = False
+				
+					
+			if inchar == '\r':#the full telem is read in
+				
+				if reading:#Make sure we were actually reading 
+					
+					_ALL = rawStream[1:]
+					
+					reading = False
+					errorCode = rawStream[cfgDict["errorStart"]:cfgDict["errorEnd"]]  #Grab error code from telem stream
+					if cfgDict['debug']: print "errorCode is {0}".format(errorCode)
+					rawStream = rawStream[:63] + rawStream[75:] #remove error code
+					rawStream = rawStream.replace('\n','')
+					stream = rawStream.split(' ') #turn rawStream into list for zipping into dictionary
+					
+					stream  = [ii for ii in stream if ii != ''] #get rid of empty items in val list
+					
+					
+					if len( stream ) == 15:#If no command has been given there will be no error
+						stream.insert(8, '')# add index for error code
+						
+					if cfgDict['debug']: print "length of stream is {0}".format(str(stream))	
+					#raw stream list is now fully parsed and in list `stream'
+					if 1:
+						threadLock.acquire()
+						outval = dict( zip( self.data_key, stream ) )#zip stream key value pairs into dictionary for easy processing
+						outval["IIS"] = lastIIS
+						##############################
+						#some extra parsing
+						outval['ERROR'] = errorCode
+						
+						#The outval["ALL"] contains the entire unparsed telem stream
+						#It is used by Azcam to populate fits header data rapidly
+							
+						
+						
+						# Try to get the IIS position 
+						# from Jeff Rill's rabbit board
+						# Sometimes for unkown reasons
+						# the information isn't available 
+						# and the socket times out if this 
+						# happens simply use the last iisPos 
+						# recieved from the rabbit board
+						if cfgDict['hasIIS']:
+							try:
+								iisPos = float( get_iis() )	
+								outval['IIS'] = iisPos
+								lastIIS = iisPos
+								put_iis( iisPos ) #Use bnc port to display iis on tcs screen
+
+							except ValueError:
+								outval["IIS"] = lastIIS
+								iisPos = lastIIS	
+						
+							outval["ALL"] = _ALL[:-20]+str(iisPos) + _ALL[-15:]
+							
+						else:
+							outval["ALL"] = _ALL[:-20]+str(0.0) + _ALL[-15:]
+							
+						threadLock.release()
+						if cfgDict['debug']: print "formatted serial string is {0}".format(outval)
+					
+					
+					else:
+						
+						threadLock.acquire()
+						outval = dict( zip( self.data_key,['BAD_STREAM']*16 ) )
+						threadLock.release()
+					rawStream = ""	
+					
+				else: reading = True
+			else:
+				if reading:
+					rawStream+=inchar
+				
+		
+	def findUSBPort(self):
+		#####################################
+		"""
+		Name: findUSBPort
+		args: None
+		Returns: device file name for serial-USB converter
+		 
+		Description: Determines which device USB device file
+			exists (if any). Initially I used lsusb to determine
+			which if the USB port in question was actually the 
+			serial to USB adapter. But this was slow. If anything else 
+			is plugged into the USB port there could be trouble.	
+		"""
+		#####################################
+		#usbs = subprocess.check_output("lsusb", shell=True)
+		#usbs=usbs.split('\n')
+		#serialUSBFullPath = False
+		#for usb in usbs:
+			#if "USB-Serial" in usb:
+				#serialUSB = usb.split(' ')
+				#serialUSBFullPath	= "/dev/bus/usb/001/%s" %serialUSB[3][:-1]
+				
+		#if serialUSBFullPath:
+		
+		if os.path.exists( '/dev/ttyUSB0' ):
+			return '/dev/ttyUSB0'
+		elif os.path.exists( '/dev/ttyUSB1' ):
+			return '/dev/ttyUSB1'
+		else:
+			return False
+		print serialUSBFullPath		
+		return serialUSBFullPath
+			
+		
+				
+class request_data( threading.Thread ):
+	def __init__( self ):
+		threading.Thread.__init__ ( self )
+	def run ( self ):
+		while 1:
+			print outval
+			time.sleep(5)
+		
+			
+def get_iis( hostname="10.30.3.40" ):
+	########################################
+	"""
+	Name: get_iis
+	args: hostname
+	
+	Description: Gets the iis position
+		from networed Jeff Rill's networked
+		encoder board. 
+	"""
+	########################################
+	HOST = socket.gethostbyname( hostname )
+	PORT= 5750
+	s=socket.socket( socket.AF_INET, socket.SOCK_STREAM )
+	s.settimeout( 0.1 )
+	try:
+		s.connect( ( HOST, PORT ) )
+		s.send("BOK IIS 123 REQUEST %s\n" %("IIS") )
+		recvstr = s.recv(100)
+		s.close()
+		return recvstr[12:]
+	except socket.error, msg:
+		#print "get_iis err", msg
+		s.close()
+		return False
+	
+def put_iis( pos ):
+	############################################
+	"""
+	Name: put_iis
+	Args: pos 
+	
+	Descriptiom:	Takes a pos in degrees
+		and outputs a value to the PWM on the board
+		The PWM is sent to an analogue filter
+		which converts it to a base voltage to 
+		be interpreted by the ADC (channel 7) 
+		on the TCS machine. To be interpreted 
+		correctly the ADC channel has to be given
+		the correct slope and intercept in pfedit as it 
+		stands now those values are:
+		
+		slope => 0.318000
+		intercept => -652.200
+		(12/2013)
+	"""
+	##########################################
+	
+	v=float( pos )/1.0814
+	v=v/100.0
+	wiringpi2.pwmWrite( 1, int( 1024*v/3.3 ) )
+	
+
+if __name__ == "__main__":
+	#try:
+	ser = get_serial( 9600 )
+	ser.start()
+	
+	
+	
+	if cfgDict['debug']: print "starting server"
+	s = Server( 5750, handler=legacyClient )
+	s.run()
+	#except Exception as E:
+		#s=open("/home/pi/telcom.err", 'a')
+		#s.write("++++++++++++++++++++++++++++++++++++++++++++\n")
+		#s.write(time.asctime() + "\n")
+		#s.write( str( E ) )
+		#s.close()
+		#ACT_LIGHT.setState( 0 )
+		#print E
+		#raise Exception(E)

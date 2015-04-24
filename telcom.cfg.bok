@@ -1,0 +1,31 @@
+
+{
+	"port"			:5750			,
+	"hasIIS"		:1			,
+	"hasActivityLight"	:0			,
+	"friends"		:["140.252.86.96",
+				 "140.252.86.94"]	,
+	"debug"			:false			,
+	"OBSID"			:"BOK"			,
+	"SYSID"			:"TCS"			,
+	"errorStart"		:63			,
+	"errorEnd"		:74			,
+
+	"keywords"		:[
+					"MOT"		, 
+					"RA"		,
+					"DEC"		,
+					"HA"		,
+					"ST"		,
+					"EL"		,
+					"AZ"		,
+					"SECZ"		,
+					"EQ"		,
+					"JD"		,
+					"WOBBLE"	,
+					"DOME"		,
+					"UT"		,
+					"IIS"		,
+					"JUNK"	
+					]
+}
