@@ -22,6 +22,8 @@ import subprocess
 import socket
 import sys
 import time
+from telcom_sat import bigelow_sat
+import ephem
 
 #Get config data and initialize a few things
 cfgName = sys.argv[1]
@@ -31,7 +33,7 @@ if cfgDict['hasActivityLight']:
 	from blink import blinker
 
 threadLock = threading.Lock()
-
+serialLock = threading.lock()
 
 if cfgDict['hasIIS']:
 	wiringpi2.wiringPiSetup()
@@ -43,7 +45,8 @@ if cfgDict['hasActivityLight']:
 
 global outval
 outval = []	
-	
+
+global sat_obj = False
 	
 
 class legacyClient( Client ):
@@ -96,8 +99,7 @@ class legacyClient( Client ):
 						self.client.close()
 						running = 0
 						break	
-					 
-
+						
 				else:
 					
 					self.client.send("BAD")
@@ -120,6 +122,9 @@ class legacyClient( Client ):
           
 				elif req_or_com == "NGREQUEST":
 					self.ngRequests[inWords[4]]()	
+				
+				elif req_or_com == "SAT":
+					self.sat_com(refNum, inWords[4:])
 				
 				#Handle commands
 				else:
@@ -199,8 +204,9 @@ class legacyClient( Client ):
 			
 		#Write the command to the serial port
 		try:
-			ser = serial.Serial( gUSBport, 9600 )
-			ser.write( comstr+"\r" )
+			with serialLock:
+				ser = serial.Serial( gUSBport, 9600 )
+				ser.write( comstr+"\r" )
 		except Exception as e:
 			if cfgDict['debug']: print e
 			return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, "SERIAL_ERROR") )
@@ -216,6 +222,46 @@ class legacyClient( Client ):
 			returnVal = "OK"
 		return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, returnVal) )
 			
+		
+	
+	def sat_com(self, com):
+		global sat_obj
+		
+		for index in range( len( com ) ):
+			while com[index].endswith("\r")  or com[index].endswith("\n"):
+				com[index] = com[index][:-1]
+		
+		if com[0] == "SATNUM":
+			try:
+				sat_obj = bigelow_sat(com[1])
+				return self.client.send("Acquired TLE\r\n")
+			except(Exception):
+				return self.client.send("TLE ERROR\r\n")
+				
+		elif com[0] == "GETPOS":
+		
+			
+			with threadLock:
+				ut = outval["UT"]
+			if sat_obj != False:
+				date = "{0}/{1}/{2} {ut}".format(*time.gmtime(), ut=ut)
+				ra,dec,alt,az = sat_obj.position( date )
+			
+				return self.client.send( "{0} {1} {2} {3}\r\n".format( str(ra), str(dec), str(alt), str(az) ) )
+				
+			else:
+				return self.client.send( "No Satellite recorded, Send SATNUM\r\n" )
+				
+			
+		elif com[0] == "GETBIAS"
+			with threadLock:
+				if sat_obj != False:
+					date = "{0}/{1}/{2} {ut}".format(*time.gmtime(), ut=ut)
+					biasRA,biasDec = sat_obj.position( date )
+					return self.client.send( "{0} {1} \r\n".format( biasRA, biasDec ) )
+				
+				else:
+					return self.client.send( "No Satellite recorded, Send SATNUM\r\n" )
 		
 	
 	def ngAll(self):
