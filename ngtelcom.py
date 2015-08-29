@@ -266,9 +266,7 @@ class legacyClient( Client ):
 	
 
 if __name__ == "__main__":
-	#try:
-	ser = get_serial( 9600 )
-	ser.start()
+	
 	
 	
 	
