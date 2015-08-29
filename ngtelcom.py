@@ -14,7 +14,7 @@ from server import Server, Client
 import json
 import sys
 import threading
-import wiringpi2
+#import wiringpi2
 import time
 import os
 import subprocess
@@ -22,33 +22,15 @@ import socket
 import sys
 import time
 import ephem
-from telescope import telescope;tel = telescope("qnxtcs")
+from telescope import telescope;tel = telescope("10.30.5.69")
 
 #Get config data and initialize a few things
-cfgName = sys.argv[1]
-cfgDict = json.load( open(cfgName, 'r') )
 
-if cfgDict['hasActivityLight']:
-	from blink import blinker
 
-threadLock = threading.Lock()
-serialLock = threading.lock()
 
-if cfgDict['hasIIS']:
-	wiringpi2.wiringPiSetup()
-	wiringpi2.pinMode( 1,2 )
-
-if cfgDict['hasActivityLight']:
-	ACT_LIGHT = blinker(26)
-	ACT_LIGHT.setState(1)
-
-global outval
-outval = []	
-
-global sat_obj = False
 	
 
-class legacyClient( Client ):
+class ngClient( Client ):
 
 	##################################################
 	"""	Client class to handle socket requests
@@ -158,9 +140,18 @@ class legacyClient( Client ):
 			
 		
 		if "ALL" in reqStr:
-			ALL = tel.reqALL()
-			self.client.send("".format(  ))
+			ALL = {}
+			ALL.update(tel.reqALL())
+			XALL.update(tel.reqXALL())
+			
+			resp="{motion} {ra} {dec} {ha} {lst} {alt} {az} {secz} {epoch} {jd} 1 {dome} {ut} 180.0\r\n".format(**ALL)
+			
+			self.client.send(resp)
 
+		else:
+			print "request was ", reqStr
+			
+			
 	#legacy Command
 	def command(self, comlist, refNum ):
 	
@@ -188,74 +179,17 @@ class legacyClient( Client ):
 		while ( comstr.endswith( "\r" ) or comstr.endswith( '\n' ) ):
 			comstr = comstr[:-1]
 			
-		#Write the command to the serial port
-		try:
-			with serialLock:
-				ser = serial.Serial( gUSBport, 9600 )
-				ser.write( comstr+"\r" )
-		except Exception as e:
-			if cfgDict['debug']: print e
-			return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, "SERIAL_ERROR") )
+		
+		if word[0] == 'RADECGUIDE':
+			dra, ddec = float(word[1]), float(word[2])
+			tel.comSTEPRA(dra)
+			tel.comSTEPDEC(ddec)
 			
-		#Wait half a second and grab the error code from
-		#the telem stream
-		time.sleep( 0.5 )
-		errorCode = outval["ERROR"].upper().strip()
-			
-		if errorCode != "E": #Command was not understood
-				returnVal = "BAD"
-		else:#Command was understood
-			returnVal = "OK"
 		return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, returnVal) )
 			
 		
 	
-	def sat_com(self, com):
-		global sat_obj
-		
-		for index in range( len( com ) ):
-			while com[index].endswith("\r")  or com[index].endswith("\n"):
-				com[index] = com[index][:-1]
-		
-		if com[0] == "SATNUM":
-			try:
-				sat_obj = bigelow_sat(com[1])
-				return self.client.send("Acquired TLE\r\n")
-			except(Exception):
-				return self.client.send("TLE ERROR\r\n")
-				
-		elif com[0] == "GETPOS":
-		
-			
-			with threadLock:
-				ut = outval["UT"]
-			if sat_obj != False:
-				date = "{0}/{1}/{2} {ut}".format(*time.gmtime(), ut=ut)
-				ra,dec,alt,az = sat_obj.position( date )
-			
-				return self.client.send( "{0} {1} {2} {3}\r\n".format( str(ra), str(dec), str(alt), str(az) ) )
-				
-			else:
-				return self.client.send( "No Satellite recorded, Send SATNUM\r\n" )
-				
-			
-		elif com[0] == "GETBIAS"
-			with threadLock:
-				if sat_obj != False:
-					date = "{0}/{1}/{2} {ut}".format(*time.gmtime(), ut=ut)
-					biasRA,biasDec = sat_obj.position( date )
-					return self.client.send( "{0} {1} \r\n".format( biasRA, biasDec ) )
-				
-				else:
-					return self.client.send( "No Satellite recorded, Send SATNUM\r\n" )
-		
-	
-	def ngAll(self):
-		outstr = ''
-		
-		for val in outval.itervalues():
-			outstr+=val+' '
-		return self.client.send( "{0}\n".format(outstr) )
+
 
 		
 
@@ -269,16 +203,8 @@ if __name__ == "__main__":
 	
 	
 	
+	print "starting server"
 	
-	if cfgDict['debug']: print "starting server"
-	s = Server( 5750, handler=legacyClient )
+	s = Server( 5750, handler=ngClient )
 	s.run()
-	#except Exception as E:
-		#s=open("/home/pi/telcom.err", 'a')
-		#s.write("++++++++++++++++++++++++++++++++++++++++++++\n")
-		#s.write(time.asctime() + "\n")
-		#s.write( str( E ) )
-		#s.close()
-		#ACT_LIGHT.setState( 0 )
-		#print E
-		#raise Exception(E)
+	
