@@ -22,8 +22,8 @@ import socket
 import sys
 import time
 import ephem
-from telescope import telescope;tel = telescope("10.30.5.69")
-
+from telescope import telescope;tel = telescope("10.30.5.69", "BIG61")
+from astro.angles import RA_angle, Dec_angle
 #Get config data and initialize a few things
 
 
@@ -43,15 +43,17 @@ class ngClient( Client ):
 	
 	def __init__(self,(client,address)):
 		Client.__init__(self, (client,address))
-		if cfgDict["debug"]: print "instantiating Client {0} {1}".format( client, address )
+		print "instantiating Client {0} {1}".format( client, address )
 		self.laddress = address
+		self.running = 1
 
 	def run(self):
-		running = 1
+		self.running = 1
 		msg_tot = ""
-		while running:
+		while self.running:
 			try:
 				data = self.client.recv(self.size)
+				print data
 				
 			except Exception as e:
 				print "error is", e, 'at', time.ctime()
@@ -71,21 +73,21 @@ class ngClient( Client ):
 				inWords = data.split( ' ' )
 				
 				#Check for Harvey's telcom string strucutre
-				if inWords[0] == cfgDict['OBSID'] and inWords[1] == cfgDict['SYSID']:
+				if inWords[0] == "BIG61" and inWords[1] == "TCS":
 					
 					try:
 						refNum = int( inWords[2] )
 					except(ValueError):
 						self.client.send("Missing Reference Number")
 						self.client.close()
-						running = 0
+						self.running = 0
 						break	
 						
 				else:
 					
 					self.client.send("BAD")
 					self.client.close()
-					running = 0
+					self.running = 0
 					break
 				
 				#Check for exceptions caused by bad input or bad parse
@@ -94,7 +96,7 @@ class ngClient( Client ):
 				except Exception as prob:
 					self.client.send( 'error=%s value=%s \n'%( prob, data ) )
 					self.client.close()
-					running = 0
+					self.running = 0
 					break
 				
 				#handle requests
@@ -115,7 +117,7 @@ class ngClient( Client ):
 			else:
 				
 				self.client.close()
-				running = 0
+				self.running = 0
 				
 	#Legacy Request
 	def request( self, refNum, reqstr ):
@@ -139,18 +141,42 @@ class ngClient( Client ):
 			reqstr = reqstr[:-1]
 			
 		
-		if "ALL" in reqStr:
+		if "ALL" in reqstr:
 			ALL = {}
 			ALL.update(tel.reqALL())
-			XALL.update(tel.reqXALL())
-			
-			resp="{motion} {ra} {dec} {ha} {lst} {alt} {az} {secz} {epoch} {jd} 1 {dome} {ut} 180.0\r\n".format(**ALL)
-			
+			ALL.update(tel.reqXALL())
+			ALL.update({'ut':tel.reqTIME()})
+
+			ALL["motion"] = int(ALL["motion"])
+			ALL["ra"] = ALL["ra"].replace(":","")
+			ALL["dec"] = ALL["dec"].replace(":","")
+			ALL["dome"] = tel.reqDOME()["az"]
+			for key in [ "alt", "az", "secz", "jd", "dome" ]:
+				ALL[key] = float(ALL[key])
+			for key, val in ALL.iteritems():
+				try:
+					ALL[key] = val.strip()
+				except (ValueError, AttributeError):
+					pass
+			      #BIG61 TCS 1 0  212629.68 +321422.8  +00:00:00 21:26:31  90.0  180.0 1.00                2000.0  2457275.731741 1 1    
+			resp="BIG61 TCS {refNum} {motion}  {ra} {dec}  {ha} {lst}  {alt:04.1f}  {az:05.1f} {secz:05.2f}                {epoch}  {jd:09.1f} 180.5 {dome:05.1f}                  180.0\r\n".format(refNum=refNum, **ALL)
+			print ALL
+			print resp
 			self.client.send(resp)
 
-		else:
-			print "request was ", reqStr
+		elif "MOTION" in reqstr:
+			mot = int( tel.request('motion') )
 			
+			if mot == 4:
+				resp = "BIG61 TCS {0} 0\r\n".format(refNum )
+			else:
+				resp = "BIG61 TCS {0} {1}\r\n".format(refNum, mot )
+
+		else:
+			print "shit! request was ", reqstr
+			resp = ""
+		
+		self.client.send(resp)
 			
 	#legacy Command
 	def command(self, comlist, refNum ):
@@ -167,31 +193,46 @@ class ngClient( Client ):
 		"""
 	#########################################################
 		
-		#construct command string
-		comstr = ''
-		for word in comlist: 
-			comstr+=word+' '
-			
-		#Get rid of whitespace caused by above parsing
-		comstr = comstr[:-1]
-			
-		#get rid of any newline or carriage returns
-		while ( comstr.endswith( "\r" ) or comstr.endswith( '\n' ) ):
-			comstr = comstr[:-1]
-			
+		for ii in range(len(comlist)):
+			while comlist[ii].endswith('\r') or comlist[ii].endswith('\n'):
+				comlist[ii] = comlist[ii][:-1]
+				
+		print comlist
 		
-		if word[0] == 'RADECGUIDE':
-			dra, ddec = float(word[1]), float(word[2])
+		if comlist[0] == 'RADECGUIDE':
+			dra, ddec = -float(comlist[1]), -float(comlist[2])
+		
 			tel.comSTEPRA(dra)
 			tel.comSTEPDEC(ddec)
+		
+		elif comlist[0] == 'NEXTRA':
+			if len( comlist ) == 3:
+				rapm = float( comlist[2] )
+			else:
+				rapm = 0.0
+			tel.comNEXTPOS( RA_Angle(comlist[1]), tel.reqDEC(), tel.request("DISEPOCH").strip(), 0.0, 0.0 )
 			
-		return self.client.send( "{0} {1} {2} {3}\r\n".format(cfgDict['OBSID'], cfgDict['SYSID'], refNum, returnVal) )
+		elif comlist[0] == 'NEXTDEC':
+			if len( comlist ) == 3:
+				rapm = float( comlist[2] )
+			else:
+				rapm = 0.0
+			tel.comNEXTPOS( tel.reqRA(), Dec_angle(comlist[1]), tel.request("DISEPOCH").strip(), 0.0, 0.0 )
+			
+		elif comlist[0] == 'MOVNEXT':
+			tel.comMOVNEXT()
+		elif comlist[0] == "SHUTDOWN":
+			self.running = 0
+			self.client.close()
+		
+		else:
+			print "SHIT"
+		return self.client.send( "{0} {1} {2} {3}\r\n".format("BIG61", "TCS", refNum, "OK") )
 			
 		
 	
 
 
-		
 
 		
 
@@ -204,7 +245,10 @@ if __name__ == "__main__":
 	
 	
 	print "starting server"
-	
-	s = Server( 5750, handler=ngClient )
-	s.run()
+	try:
+		s = Server( 5750, handler=ngClient )
+		s.run()
+	except(Exception):
+		print "Closing server"
+		s.server.close()
 	
