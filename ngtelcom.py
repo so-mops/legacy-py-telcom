@@ -159,10 +159,10 @@ class ngClient( Client ):
 				except (ValueError, AttributeError):
 					pass
 			      #BIG61 TCS 1 0  212629.68 +321422.8  +00:00:00 21:26:31  90.0  180.0 1.00                2000.0  2457275.731741 1 1    
-			resp="BIG61 TCS {refNum} {motion}  {ra} {dec}  {ha} {lst}  {alt:04.1f}  {az:05.1f} {secz:05.2f}                {epoch}  {jd:09.1f} 180.5 {dome:05.1f}                  180.0\r\n".format(refNum=refNum, **ALL)
-			print ALL
+			resp="BIG61 TCS {refNum} {motion}  {ra} {dec}  {ha} {lst}  {alt:04.1f}  {az:05.1f} {secz:05.2f}                {epoch}  {jd:09.1f} 180.5 {dome:05.1f}                  180.0 \r\n".format(refNum=refNum, **ALL)
+			#print ALL
 			print resp
-			self.client.send(resp)
+			#self.client.send(resp)
 
 		elif "MOTION" in reqstr:
 			mot = int( tel.request('motion') )
@@ -200,10 +200,12 @@ class ngClient( Client ):
 		print comlist
 		
 		if comlist[0] == 'RADECGUIDE':
-			dra, ddec = -float(comlist[1]), -float(comlist[2])
-		
+			dra, ddec = float(comlist[1]), float(comlist[2])
+			
 			tel.comSTEPRA(dra)
-			tel.comSTEPDEC(ddec)
+			#tel.comSTEPDEC(ddec)
+			#log_guide( dra, ddec )
+			
 		
 		elif comlist[0] == 'NEXTRA':
 			if len( comlist ) == 3:
@@ -235,7 +237,10 @@ class ngClient( Client ):
 
 
 		
-
+def log_guide( dra, ddec  ):
+	f=open("guide.dat", 'a')
+	f.write( "{0} {1} {1}\n".format(time.time(), dra, ddec) )
+	f.close()
 	
 
 	
