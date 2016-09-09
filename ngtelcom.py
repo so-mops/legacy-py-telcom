@@ -24,6 +24,9 @@ import time
 import ephem
 from telescope import telescope;tel = telescope("10.30.5.69", "BIG61")
 from astro.angles import RA_angle, Dec_angle
+import math
+import re
+from scottSock import scottSock
 #Get config data and initialize a few things
 
 
@@ -161,7 +164,7 @@ class ngClient( Client ):
 			      #BIG61 TCS 1 0  212629.68 +321422.8  +00:00:00 21:26:31  90.0  180.0 1.00                2000.0  2457275.731741 1 1    
 			resp="BIG61 TCS {refNum} {motion}  {ra} {dec}  {ha} {lst}  {alt:04.1f}  {az:05.1f} {secz:05.2f}                {epoch}  {jd:09.1f} 180.5 {dome:05.1f}                  180.0 \r\n".format(refNum=refNum, **ALL)
 			#print ALL
-			print resp
+			#print resp
 			#self.client.send(resp)
 
 		elif "MOTION" in reqstr:
@@ -201,9 +204,10 @@ class ngClient( Client ):
 		
 		if comlist[0] == 'RADECGUIDE':
 			dra, ddec = float(comlist[1]), float(comlist[2])
-			
-			tel.comSTEPRA(dra)
-			#tel.comSTEPDEC(ddec)
+			print dra, ddec
+			tel.comSTEPRA(dra/math.cos(tel.reqDEC()))
+			tel.comSTEPDEC(ddec)
+			soc_guide(dra, ddec)
 			#log_guide( dra, ddec )
 			
 		
@@ -212,14 +216,15 @@ class ngClient( Client ):
 				rapm = float( comlist[2] )
 			else:
 				rapm = 0.0
-			tel.comNEXTPOS( RA_Angle(comlist[1]), tel.reqDEC(), tel.request("DISEPOCH").strip(), 0.0, 0.0 )
+			tel.comNEXTPOS( str2ra(comlist[1]), Dec_Angle(tel.reqXDEC()['next']), tel.request("DISEPOCH").strip(), 0.0, 0.0 )
+		
 			
 		elif comlist[0] == 'NEXTDEC':
 			if len( comlist ) == 3:
 				rapm = float( comlist[2] )
 			else:
 				rapm = 0.0
-			tel.comNEXTPOS( tel.reqRA(), Dec_angle(comlist[1]), tel.request("DISEPOCH").strip(), 0.0, 0.0 )
+			tel.comNEXTPOS( RA_Angle(tel.reqXRA()['next']), str2dec(comlist[1]), tel.request("DISEPOCH").strip(), 0.0, 0.0 )
 			
 		elif comlist[0] == 'MOVNEXT':
 			tel.comMOVNEXT()
@@ -235,14 +240,28 @@ class ngClient( Client ):
 	
 
 
+def str2ra(angle_str):
+	return RA_angle("{0}:{1}:{2}".format(angle_str[0:2], angle_str[2:4], angle_str[4:] ) )
 
-		
+def str2dec( angle_str ):
+	return RA_angle("{0}:{1}:{2}".format(angle_str[0:3], angle_str[3:5], angle_str[5:] ) )
+	
 def log_guide( dra, ddec  ):
 	f=open("guide.dat", 'a')
 	f.write( "{0} {1} {1}\n".format(time.time(), dra, ddec) )
 	f.close()
 	
 
+def soc_guide(dra, ddec):
+	try:
+		s=scottSock( '10.30.1.1', 5749 )
+		s.talk( "{0} {1}\n".format(dra, ddec) )
+		print dra, ddec
+		s.close()
+	except Exception as err:
+		pass
+
+	return
 	
 
 if __name__ == "__main__":
