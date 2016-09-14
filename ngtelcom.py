@@ -22,7 +22,15 @@ import socket
 import sys
 import time
 import ephem
-from telescope import telescope;tel = telescope("10.30.5.69", "BIG61")
+while 1:#wait for the telescope to come on line
+	try:
+
+		from telescope import telescope;tel = telescope("10.30.5.69", "BIG61")
+		time.sleep(1.0)
+		break
+	except Exception:
+		time.sleep(30)
+	
 from astro.angles import RA_angle, Dec_angle
 import math
 import re
