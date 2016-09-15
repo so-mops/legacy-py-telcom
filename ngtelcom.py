@@ -28,7 +28,8 @@ while 1:#wait for the telescope to come on line
 		from telescope import telescope;tel = telescope("10.30.5.69", "BIG61")
 		time.sleep(1.0)
 		break
-	except Exception:
+	except Exception as err:
+		print err
 		time.sleep(30)
 	
 from astro.angles import RA_angle, Dec_angle
