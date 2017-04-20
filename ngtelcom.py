@@ -218,8 +218,8 @@ class ngClient( Client ):
 				tel.comSTEPRA(dra/math.cos(tel.reqDEC()))
 				tel.comSTEPDEC(ddec)
 				soc_guide(dra, ddec)
-			except Exception as err
-				pass
+			except Exception as err:
+				print err
 			#log_guide( dra, ddec )
 			
 		
