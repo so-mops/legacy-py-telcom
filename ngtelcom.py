@@ -214,9 +214,12 @@ class ngClient( Client ):
 		if comlist[0] == 'RADECGUIDE':
 			dra, ddec = float(comlist[1]), float(comlist[2])
 			print dra, ddec
-			tel.comSTEPRA(dra/math.cos(tel.reqDEC()))
-			tel.comSTEPDEC(ddec)
-			soc_guide(dra, ddec)
+			try:
+				tel.comSTEPRA(dra/math.cos(tel.reqDEC()))
+				tel.comSTEPDEC(ddec)
+				soc_guide(dra, ddec)
+			except Exception as err
+				pass
 			#log_guide( dra, ddec )
 			
 		
