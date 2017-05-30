@@ -21,7 +21,6 @@ import subprocess
 import socket
 import sys
 import time
-import ephem
 while 1:#wait for the telescope to come on line
 	try:
 
@@ -118,8 +117,6 @@ class ngClient( Client ):
 				elif req_or_com == "NGREQUEST":
 					self.ngRequests[inWords[4]]()	
 				
-				elif req_or_com == "SAT":
-					self.sat_com(refNum, inWords[4:])
 				
 				#Handle commands
 				else:
