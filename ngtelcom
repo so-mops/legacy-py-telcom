@@ -1,0 +1,91 @@
+#!/bin/bash
+
+### BEGIN INIT INFO
+# Provides:             telcom
+# Required-Start:       $remote_fs $syslog
+# Required-Stop:        $remote_fs $syslog
+# Default-Start:        2 3 4 5
+# Default-Stop:
+# Short-Description:    OpenBSD Secure Shell server
+### END INIT INFO
+
+set -e
+
+NAME=telcom
+PIDFILE="/var/run/$NAME.pid"
+DAEMON=/home/scott/git-clones/legacy-py-telcom/ngtelcom.py
+#cfg_opt="/home/scott/.mtnops/telcom.cfg"
+PATH="$PATH:/sbin"
+
+
+kill_all()
+{
+        echo "kill_all called"
+        PIDS="`ps -Aelf | grep /home/pi/telcom.py  | grep python | awk '{printf("%s\n", $4)}'`"
+        thisCount=0
+        for PID in $PIDS; do  thisCount=$((thisCount+1)); done
+        if [ "$thisCount" -gt 1 ]; then
+                echo "too many instances running $PIDS"
+                for a in `ps -Aelf | grep telcom.py  | grep python| awk '{printf("%s\n", $4)}'`; do kill -9 $a; done
+                echo "" > $PIDFILE;
+
+        fi
+}
+
+
+case "$1" in
+  start)
+        echo  "Starting $DAEMON"
+        start-stop-daemon --start --make-pidfile --pidfile $PIDFILE --exec $DAEMON -- $cfg_opt >> /home/scott/telcom.err  2>&1 &
+        ;;
+  stop)
+        echo "Stopping"
+        start-stop-daemon --stop --pidfile $PIDFILE || kill_all
+        ;;
+
+  restart)
+
+        thePID=`ps -Aelf | grep /home/pi/telcom.py  | grep python | awk '{printf("%s\n", $4)}'`
+        filePID="$(cat $PIDFILE)"
+        if [ "$thePID" == "" ]; then
+                echo "$NAME is not running";
+
+
+        elif [ "$thePID" == "$filePID" ]; then
+                echo "$NAME is running";
+                start-stop-daemon --stop --pidfile $PIDFILE
+        else
+                kill_all
+                echo "Stopping $thePID"
+                start-stop-daemon --stop --pidfile $PIDFILE || kill_all
+        fi
+        echo "Starting $DAEMON"
+        start-stop-daemon --start --make-pidfile --pidfile $PIDFILE --exec $DAEMON -- $cfg_opt >> /home/pi/telcom.err  2>&1 &
+        ;;
+  soft-start)
+
+        thePID=`ps -Aelf | grep telcom.py  | grep python | awk '{printf("%s\n", $4)}'`
+        filePID="$(cat $PIDFILE)"
+
+
+        if [ "$thePID" == "$filePID" ]; then
+                echo "running as PID $thePID";
+
+        elif [ "$thePID" == "" ]; then
+                echo "$NAME was not running starting";
+                start-stop-daemon --start --make-pidfile --pidfile $PIDFILE --exec $DAEMON -- $cfg_opt >> /home/pi/telcom.err  2>&1 &
+
+        else
+                echo $thePID
+                echo "$NAME was running as wrong pid restarting"
+                kill -9 $thePID;
+                kill_all
+                start-stop-daemon --start --make-pidfile --pidfile $PIDFILE --exec $DAEMON -- $cfg_opt >> /home/pi/telcom.err  2>&1 &
+
+        fi
+        ;;
+
+esac
+
+exit 0
+
