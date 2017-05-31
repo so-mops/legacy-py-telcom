@@ -177,7 +177,9 @@ class ngClient( Client ):
 			#self.client.send(resp)
 
 		elif "MOTION" in reqstr:
-			mot = int( tel.request('motion') )
+			#mot = int( tel.request('motion') )
+			#pretend the telescope isn't moving --scott 5/21/2017
+			mot = 0
 			
 			if mot == 4:
 				resp = "BIG61 TCS {0} 0\r\n".format(refNum )
@@ -215,9 +217,9 @@ class ngClient( Client ):
 			dra, ddec = float(comlist[1]), float(comlist[2])
 			print dra, ddec
 			try:
-				tel.comSTEPRA(dra/math.cos(tel.reqDEC()))
-				tel.comSTEPDEC(ddec)
-				soc_guide(dra, ddec)
+				tel.comSTEPRA(dra/math.cos(tel.reqDEC()) )
+				tel.comSTEPDEC(ddec )
+				#soc_guide(dra, ddec)
 			except Exception as err:
 				print err
 			#log_guide( dra, ddec )
