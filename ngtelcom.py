@@ -35,10 +35,11 @@ from astro.angles import RA_angle, Dec_angle
 import math
 import re
 from scottSock import scottSock
-#Get config data and initialize a few things
 
-
-
+#global guided commands
+GUIDERA=0.0
+GUIDEDEC=0.0
+GUIDETIME=0
 	
 
 class ngClient( Client ):
@@ -183,6 +184,8 @@ class ngClient( Client ):
 			else:
 				resp = "BIG61 TCS {0} {1}\r\n".format(refNum, mot )
 
+		elif "GUIDE" in reqstr:
+			resp = "BIG61 TCS {0} {1} {2} {3}\r\n".format(refNum, GUIDETIME, GUIDERA, GUIDEDEC)
 		else:
 			print "shit! request was ", reqstr
 			resp = ""
@@ -212,7 +215,9 @@ class ngClient( Client ):
 		
 		if comlist[0] == 'RADECGUIDE':
 			dra, ddec = float(comlist[1]), float(comlist[2])
-			print dra, ddec
+			global GUIDERA, GUIDEDEC, GUIDETIME
+			GUIDERA, GUIDEDEC=dra, ddec
+			GUIDETIME=time.time()
 			try:
 				tel.comSTEPRA(dra/math.cos(tel.reqDEC()) )
 				tel.comSTEPDEC(ddec )
